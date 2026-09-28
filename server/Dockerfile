@@ -37,10 +37,14 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=4000
 
-# `--ingroup node` reuses the base image's existing unprivileged group rather than creating a
-# second one. Running as root in a container is not isolation: a container escape starts as root
-# on the host's kernel namespace.
-RUN useradd --uid 10001 --ingroup node --create-home --shell /usr/sbin/nologin platform
+# `--gid node` reuses the base image's existing unprivileged group rather than creating a second
+# one. Running as root in a container is not isolation: a container escape starts as root on the
+# host's kernel namespace.
+#
+# `--gid`, not `--ingroup`: the latter is Debian `adduser`'s option and `useradd` rejects it with
+# exit 2 and a usage dump. Both images failed to build on that until CI ran them, because Docker
+# is not installed on the machine this was written on.
+RUN useradd --uid 10001 --gid node --create-home --shell /usr/sbin/nologin platform
 
 WORKDIR /app
 COPY --from=build --chown=platform:node /app/node_modules ./node_modules

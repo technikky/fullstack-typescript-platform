@@ -32,7 +32,7 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 
-RUN useradd --uid 10001 --ingroup node --create-home --shell /usr/sbin/nologin web
+RUN useradd --uid 10001 --gid node --create-home --shell /usr/sbin/nologin web
 WORKDIR /app
 
 # `.next/standalone` carries its own minimal server and the traced dependencies. `static` and

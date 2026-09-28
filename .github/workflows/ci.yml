@@ -225,6 +225,12 @@ jobs:
     name: docker compose
     runs-on: ubuntu-latest
     needs: [server, web]
+    # Job-level, not per-step. The compose file interpolates `${JWT_SECRET:?...}` on *every*
+    # invocation, so `docker compose logs` and `docker compose down` need it too -- and without
+    # it they failed on a run where the build had already failed, turning one red step into
+    # three and hiding the logs that would have explained the first.
+    env:
+      JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -234,13 +240,9 @@ jobs:
       # build output -- this one did exactly that, from an unquoted `${VAR:?message}` whose error
       # text contained ": ". Two seconds here, or five minutes and a confusing log there.
       - name: Validate the compose file
-        env:
-          JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
         run: docker compose config --quiet
 
       - name: Build and start the whole stack
-        env:
-          JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
         run: docker compose up --build --detach --wait --wait-timeout 180
 
       # Starting the containers proves the images build. Driving a real request through them is
