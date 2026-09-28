@@ -56,8 +56,13 @@ services:
       # Not a default in the code: a development fallback secret is how a production deployment
       # ends up signing tokens with a value from a repository. Generate one with
       # `openssl rand -base64 48`.
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env; generate with: openssl rand -base64 48}
-      DATABASE_URL: postgres://platform:${POSTGRES_PASSWORD:-platform-local-only}@postgres:5432/platform
+      # Quoted, and it has to be: the `${VAR:?message}` error text contains ": ", which YAML
+      # reads as a nested mapping. Unquoted, this file failed to parse at all -- `docker compose`
+      # rejected it with "mapping values are not allowed in this context" before it built
+      # anything. The `docker compose config` step in CI now catches that class of mistake in
+      # seconds instead of after a full image build.
+      JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET in .env - generate one with openssl rand -base64 48}"
+      DATABASE_URL: "postgres://platform:${POSTGRES_PASSWORD:-platform-local-only}@postgres:5432/platform"
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:3000
       LOG_LEVEL: ${LOG_LEVEL:-info}

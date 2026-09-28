@@ -229,6 +229,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
 
+      # Parse and interpolate the file before building anything. A compose file with a YAML
+      # error fails `up` only after the images are built, and the message arrives buried under
+      # build output -- this one did exactly that, from an unquoted `${VAR:?message}` whose error
+      # text contained ": ". Two seconds here, or five minutes and a confusing log there.
+      - name: Validate the compose file
+        env:
+          JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
+        run: docker compose config --quiet
+
       - name: Build and start the whole stack
         env:
           JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
