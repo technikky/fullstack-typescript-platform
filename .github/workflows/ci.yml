@@ -1,0 +1,304 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+
+    # Real Postgres and real Redis. The suite passes without them -- it uses PostgreSQL compiled to
+    # WebAssembly in-process and an in-memory key-value store -- but the `pg` and `ioredis` adapters
+    # can only be exercised against servers, and they are what production runs. The same contract
+    # suites run against both, so a drift between an adapter and its in-process counterpart fails
+    # here.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: platform_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform -d platform_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        # `ci`, not `install`: it fails when the lockfile and the manifest disagree, which is what
+        # you want in a build. `install` would quietly resolve a different tree than was tested.
+        run: npm ci
+
+      - name: Type check
+        working-directory: server
+        run: npm run typecheck
+
+      - name: Tests
+        working-directory: server
+        env:
+          TEST_DATABASE_URL: postgres://platform:ci-only-password@localhost:5432/platform_test
+          TEST_REDIS_URL: redis://localhost:6379
+        run: npm run test:coverage
+
+      - name: Fail if a contract suite was skipped
+        working-directory: server
+        # A suite that silently ran nothing is worse than a red one. The adapter tests skip
+        # themselves when no server is reachable; here one *is* reachable, so a skip means the
+        # service container never came up and the run covered less than it appears to.
+        run: |
+          set -euo pipefail
+          npx vitest run tests/adapters.test.ts --reporter=json --outputFile=./adapters-report.json
+          skipped=$(python3 -c "import json; d = json.load(open('adapters-report.json')); print(d['numPendingTests'] + d['numTodoTests'])")
+          echo "skipped: $skipped"
+          if [ "$skipped" != "0" ]; then
+            echo "::error::$skipped adapter contract test(s) were skipped although TEST_DATABASE_URL and TEST_REDIS_URL are set"
+            exit 1
+          fi
+        env:
+          TEST_DATABASE_URL: postgres://platform:ci-only-password@localhost:5432/platform_test
+          TEST_REDIS_URL: redis://localhost:6379
+
+      - name: Build
+        working-directory: server
+        run: npm run build
+
+      - name: Upload coverage
+        if: matrix.node == '22'
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage
+          path: server/coverage/
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Type check
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Tests
+        working-directory: web
+        run: npm run test:coverage
+
+      # `next build` runs its own type check across the app router's generated types, which
+      # `tsc --noEmit` alone does not see. A build that succeeds is part of the gate, not an extra.
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: web/coverage/
+
+  load-test:
+    name: load test
+    runs-on: ubuntu-latest
+    needs: server
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: platform_load
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform -d platform_load"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        run: npm ci
+
+      # Not a capacity benchmark -- a shared runner's numbers are not comparable to anything. It is
+      # here because the load test exits non-zero on any 5xx or unexpected 4xx, so it catches a
+      # deadlock, a connection-pool exhaustion or a lock-ordering bug that appears only under
+      # concurrency and that no unit test reaches.
+      - name: Run under concurrency, against real Postgres and Redis
+        working-directory: server
+        env:
+          JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
+          DATABASE_URL: postgres://platform:ci-only-password@localhost:5432/platform_load
+          REDIS_URL: redis://localhost:6379
+        run: npx tsx src/bench/loadtest.ts --concurrency 24 --duration 15 --warmup 3 --users 8
+
+  manifests:
+    name: kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Schema validation against the upstream Kubernetes JSON schemas. The manifests have never
+      # been applied to a cluster -- `deploy/k8s/README.md` says so -- and this is what makes the
+      # weaker claim ("they match the API shape") true rather than assumed.
+      - name: Validate against the Kubernetes schemas
+        uses: docker://ghcr.io/yannh/kubeconform:latest
+        with:
+          args: >-
+            -strict
+            -summary
+            -kubernetes-version 1.31.0
+            -ignore-missing-schemas
+            deploy/k8s/api.yaml
+            deploy/k8s/configmap.yaml
+            deploy/k8s/ingress.yaml
+            deploy/k8s/namespace.yaml
+            deploy/k8s/networkpolicy.yaml
+            deploy/k8s/postgres.yaml
+            deploy/k8s/redis.yaml
+            deploy/k8s/secret.example.yaml
+            deploy/k8s/web.yaml
+
+  secrets-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: docker compose
+    runs-on: ubuntu-latest
+    needs: [server, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and start the whole stack
+        env:
+          JWT_SECRET: a-ci-only-secret-that-is-long-enough-here
+        run: docker compose up --build --detach --wait --wait-timeout 180
+
+      # Starting the containers proves the images build. Driving a real request through them is
+      # what proves the entrypoints, the migration on startup, the CORS configuration and the
+      # inter-service networking are right -- and those are exactly what a unit test cannot see.
+      - name: Exercise the running stack
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:4000/health | tee /tmp/health.json
+          grep -q '"database":"pg"' /tmp/health.json
+          grep -q '"keyValue":"redis"' /tmp/health.json
+          curl -fsS http://localhost:4000/ready | grep -q '"ready":true'
+
+          # Register, create a workspace, create a board, create an item -- the whole write path
+          # against the real Postgres in the compose network.
+          register=$(curl -fsS -X POST http://localhost:4000/api/auth/register \
+            -H 'content-type: application/json' \
+            -d '{"email":"ci@example.test","name":"CI","password":"a-sufficiently-long-password"}')
+          token=$(printf '%s' "$register" | python3 -c "import json,sys;print(json.load(sys.stdin)['tokens']['accessToken'])")
+
+          workspace=$(curl -fsS -X POST http://localhost:4000/api/workspaces \
+            -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d '{"name":"CI workspace"}')
+          workspace_id=$(printf '%s' "$workspace" | python3 -c "import json,sys;print(json.load(sys.stdin)['workspace']['id'])")
+
+          board=$(curl -fsS -X POST "http://localhost:4000/api/workspaces/$workspace_id/boards" \
+            -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d '{"name":"CI board"}')
+          board_id=$(printf '%s' "$board" | python3 -c "import json,sys;print(json.load(sys.stdin)['board']['id'])")
+
+          curl -fsS -X POST "http://localhost:4000/api/boards/$board_id/items" \
+            -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -H 'idempotency-key: ci-key-1' -d '{"title":"From CI"}' > /dev/null
+
+          # The same key again must not create a second item. This is the one behaviour that needs
+          # real Redis to be meaningful: the claim is made with SET NX.
+          curl -fsS -X POST "http://localhost:4000/api/boards/$board_id/items" \
+            -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -H 'idempotency-key: ci-key-1' -d '{"title":"From CI"}' > /dev/null
+          count=$(curl -fsS "http://localhost:4000/api/boards/$board_id/items" \
+            -H "authorization: Bearer $token" \
+            | python3 -c "import json,sys;print(len(json.load(sys.stdin)['items']))")
+          test "$count" = "1" || { echo "::error::idempotency key created $count items"; exit 1; }
+
+          # And the GraphQL surface answers over the same stack.
+          curl -fsS -X POST http://localhost:4000/graphql \
+            -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d '{"query":"{ me { email } }"}' | grep -q 'ci@example.test'
+
+          # The client serves, and carries its runtime configuration rather than a build-time one.
+          curl -fsS http://localhost:3000/ | grep -q '__PLATFORM_CONFIG__'
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes

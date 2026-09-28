@@ -1,0 +1,13 @@
+# Normalise to LF. A CRLF checkout breaks the shell scripts in CI and the Dockerfile CMD lines,
+# and it changes the bytes of `schema.sql`, which the server reads at runtime.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.sql text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

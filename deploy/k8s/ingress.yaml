@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platform
+  namespace: platform
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # The WebSocket upgrade travels over a long-lived connection. nginx's default 60s read timeout
+    # would close an idle socket every minute, and every client in the fleet would reconnect on the
+    # same cadence. One hour, with the client's own ping as the keepalive.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Matches the server's own body limit, so an oversized request is rejected at the edge rather
+    # than being buffered and forwarded only to be rejected again.
+    nginx.ingress.kubernetes.io/proxy-body-size: 256k
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # HSTS with preload. Only once the domain is genuinely HTTPS-only: preload is difficult to undo.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - platform.example.com
+        - api.platform.example.com
+      secretName: platform-tls
+  rules:
+    # Separate hostnames rather than a path prefix. A path split would put the API and the client on
+    # one origin, which sounds simpler but means the client's own bundle and the API share a CORS
+    # and cookie scope -- so an XSS in the client has the API's origin for free.
+    - host: platform.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: api.platform.example.com
+      http:
+        paths:
+          # One rule for both HTTP and the WebSocket upgrade, because the server serves both on one
+          # port. Nothing extra is needed: nginx passes the upgrade through when the client asks.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http

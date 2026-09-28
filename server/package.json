@@ -1,0 +1,37 @@
+{
+  "name": "@platform/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Auth, RBAC, REST + GraphQL, WebSockets and Redis over one domain layer.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch --experimental-strip-types src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.0",
+    "fastify": "^5.2.0",
+    "graphql": "^16.10.0",
+    "ioredis": "^5.4.2",
+    "jose": "^6.0.0",
+    "pg": "^8.13.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.0",
+    "@types/ws": "^8.5.13",
+    "@vitest/coverage-v8": "^5.0.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.2"
+  }
+}

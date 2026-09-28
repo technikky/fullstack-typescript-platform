@@ -1,0 +1,59 @@
+# Default-deny, then allow only the flows that are needed.
+#
+# Without this, a compromised pod in any namespace can reach Postgres directly -- the database has no
+# network boundary of its own inside a cluster, and its password is the only thing in the way.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: platform
+spec:
+  # Empty selector: every pod in the namespace.
+  podSelector: {}
+  policyTypes: ["Ingress"]
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-web-and-api
+  namespace: platform
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["web", "api"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3000
+        - port: 4000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-datastores
+  namespace: platform
+spec:
+  # Only the API may reach Postgres and Redis. Notably this also stops the *web* pods from doing so,
+  # which they have no reason to and which limits what an exploited client container can touch.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["postgres", "redis"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+      ports:
+        - port: 5432
+        - port: 6379

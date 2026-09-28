@@ -1,0 +1,113 @@
+# Redis, for evaluation only. Single replica, no sentinel, no cluster.
+#
+# The platform needs Redis for three things that must be shared across API replicas: rate-limit
+# counters, the access-token denylist, and WebSocket fan-out. Losing them is survivable -- limits
+# reset, revoked tokens expire on their own, clients reconnect -- which is why this is a Deployment
+# with a modest volume rather than a StatefulSet pretending to be durable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: platform
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two Redis pods sharing one ReadWriteOnce volume cannot both mount
+  # it, so a rolling update would deadlock with the new pod Pending forever.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: platform
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: platform
+        app.kubernetes.io/component: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            # Append-only, with RDB snapshots off. Counters and denylist entries are small and
+            # short-lived; an AOF replays them on restart without the fork-and-copy cost of a
+            # snapshot.
+            - --appendonly
+            - "yes"
+            - --save
+            - ""
+            # A bound, so a runaway key pattern cannot consume the node's memory. `allkeys-lru`
+            # rather than `noeviction`: every key here has a TTL and is reconstructible, so evicting
+            # the coldest is better than refusing writes.
+            - --maxmemory
+            - 200mb
+            - --maxmemory-policy
+            - allkeys-lru
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              # Above `maxmemory` so Redis evicts under its own policy before the kernel OOM-kills
+              # the container. Equal values would let the OOM killer win the race.
+              memory: 320Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: platform
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: platform
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

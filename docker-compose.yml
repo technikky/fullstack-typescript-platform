@@ -1,0 +1,94 @@
+# The whole platform, locally: Postgres, Redis, the API and the client.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# This is also the configuration that exercises the code paths the test suite cannot reach on its
+# own: the `pg` adapter over the wire protocol with a real connection pool, and the `ioredis`
+# adapter against real Redis. The test suite runs the *same contract suites* against them when
+# TEST_DATABASE_URL and TEST_REDIS_URL are set -- see `docs/operations.md`.
+
+name: fullstack-typescript-platform
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platform-local-only}
+      POSTGRES_DB: platform
+    ports:
+      # Exposed so the contract suites can be pointed at it from the host.
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` with the database named: the default checks the server is listening, which it
+      # does before the named database exists on first start.
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # `--appendonly yes` so rate-limit counters and the token denylist survive a restart. Losing
+    # them is not catastrophic, but a restart that silently resets every limiter is a window.
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./server
+      target: runtime
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # Not a default in the code: a development fallback secret is how a production deployment
+      # ends up signing tokens with a value from a repository. Generate one with
+      # `openssl rand -base64 48`.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env; generate with: openssl rand -base64 48}
+      DATABASE_URL: postgres://platform:${POSTGRES_PASSWORD:-platform-local-only}@postgres:5432/platform
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "4000:4000"
+    depends_on:
+      # `service_healthy`, not `service_started`: with `started` the API races the database's
+      # initialisation and its first migration fails on a server that is not accepting connections
+      # yet.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      target: runtime
+    environment:
+      # Read at runtime and injected into the page, so this image is not environment-specific.
+      # The browser resolves it, so it is localhost from the host's point of view -- not the
+      # compose network name, which a browser cannot resolve.
+      PLATFORM_API_URL: http://localhost:4000
+      PLATFORM_WS_URL: ws://localhost:4000/ws
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

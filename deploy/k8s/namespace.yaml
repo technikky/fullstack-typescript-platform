@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    # Enforces the restricted Pod Security Standard at admission: no privileged containers, no host
+    # namespaces, no running as root. The manifests already comply, and this is what stops a future
+    # one from quietly not complying.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted

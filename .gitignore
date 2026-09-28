@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets. `.env.example` is the only one committed.
+.env
+.env.*
+!.env.example
+
+# Local data directories, if anyone points pglite or Postgres at one.
+pgdata/
+.pglite/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*

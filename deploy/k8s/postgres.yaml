@@ -1,0 +1,106 @@
+# Postgres, for evaluation only.
+#
+# Single replica, no backups, no failover, no connection pooler, no tuning. A StatefulSet with one
+# replica and a PVC is the honest minimum for trying the platform out -- it is not a database
+# platform, and running one well on Kubernetes is its own discipline.
+#
+# For production: a managed Postgres, with `DATABASE_URL` pointed at it. The application needs no
+# change, which is the point of having the connection string be the only coupling.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: platform
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: platform
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: platform
+        app.kubernetes.io/component: postgres
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The postgres user in the official image.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: platform
+            - name: POSTGRES_DB
+              value: platform
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_PASSWORD
+            # The image refuses to initialise onto a mount point that is not empty, and a PVC has a
+            # lost+found directory. A subdirectory avoids that.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              # The database is named explicitly: without it, `pg_isready` succeeds as soon as the
+              # server listens, which happens before the database exists on first start.
+              command: ["pg_isready", "-U", "platform", "-d", "platform"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "platform"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: platform
+spec:
+  # Headless: a StatefulSet's pod gets a stable DNS name, and nothing here needs a load-balanced
+  # virtual IP in front of a single writer.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: platform
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

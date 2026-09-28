@@ -1,0 +1,17 @@
+.git/
+.github/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+**/.next/
+coverage/
+**/coverage/
+deploy/
+docs/
+*.md
+.env
+.env.*
+!.env.example
+*.log

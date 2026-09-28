@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: platform
+data:
+  # Non-secret configuration only. Anything here is readable by anyone with `get configmap` in this
+  # namespace, so the connection strings and the signing key live in the Secret instead.
+  JWT_ISSUER: fullstack-typescript-platform
+  JWT_AUDIENCE: platform-api
+
+  # Ten minutes. Short because the access token is not revocable on its own -- the denylist covers
+  # explicit logout, but a token stolen without a logout is valid until it expires. Shorter would
+  # mean more refresh traffic; longer would widen that window.
+  ACCESS_TOKEN_TTL_SECONDS: "600"
+  REFRESH_TOKEN_TTL_SECONDS: "2592000"
+
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  RATE_LIMIT_MAX_REQUESTS: "300"
+  # Far tighter: this is the credential-stuffing surface, and the only endpoint class where the
+  # caller has no identity to key on yet.
+  AUTH_RATE_LIMIT_MAX_REQUESTS: "10"
+
+  # No localhost. `loadConfig` refuses to start in production if this still contains one, because a
+  # development allow-list that reaches production is a real hole.
+  CORS_ORIGINS: https://platform.example.com
+
+  LOG_LEVEL: info
+
+  # `REDIS_URL` is not a secret -- there is no password in it -- so it lives here. `DATABASE_URL`
+  # contains one, so it does not.
+  REDIS_URL: redis://redis:6379

@@ -1,0 +1,30 @@
+{
+  "name": "fullstack-typescript-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Auth, RBAC, REST + GraphQL and WebSockets over one domain layer, in TypeScript. Postgres, Redis, Docker, Kubernetes manifests.",
+  "license": "MIT",
+  "author": "Nur Afzan Zulaikha",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/technikky/fullstack-typescript-platform.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspaces",
+    "test:coverage": "npm run test:coverage --workspaces",
+    "build": "npm run build --workspaces",
+    "dev:api": "npm run dev --workspace @platform/server",
+    "dev:web": "npm run dev --workspace @platform/web",
+    "loadtest": "npm exec --workspace @platform/server -- tsx src/bench/loadtest.ts",
+    "up": "docker compose up --build",
+    "down": "docker compose down -v"
+  }
+}
