@@ -47,8 +47,9 @@ npm test
 ```
 
 Without those variables the `pg` and `redis` suites **skip with a printed reason** rather than passing
-quietly. CI sets both and additionally fails the build if anything skipped, because a suite that
-silently covered less than it appears to is worse than a red one.
+quietly. CI sets both, so those suites always run there — and if a service container failed to come up,
+they fail on connection rather than skipping, because a suite that silently covered less than it
+appears to is worse than a red one.
 
 ## Configuration
 
