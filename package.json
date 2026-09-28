@@ -12,18 +12,31 @@
   "engines": {
     "node": ">=20"
   },
-  "workspaces": [
-    "server",
-    "web"
+  "comment:layout": [
+    "This is a task runner, not an npm workspace root. `server` and `web` are two independent",
+    "applications that happen to share a repository: they share no code, they talk to each other",
+    "over HTTP, and each has its own lockfile, its own Dockerfile and its own CI job.",
+    "",
+    "It DID declare `workspaces: [server, web]`, and CI proved that wrong immediately. With a",
+    "workspace root present, npm treats the root as the project and looks for the lockfile there,",
+    "so `npm ci` inside server/ failed with EUSAGE: 'can only install with an existing",
+    "package-lock.json'. The per-package lockfiles were still on disk; npm had simply stopped",
+    "looking at them.",
+    "",
+    "Hoisting to a root lockfile was the alternative, but it makes both Dockerfiles worse: each",
+    "builds from its own directory as context, and a root lockfile would force a repo-root build",
+    "context plus a workspace-scoped install just to reach it. Two independent packages is what",
+    "the deployment topology already is, so the manifest now says so."
   ],
   "scripts": {
-    "typecheck": "npm run typecheck --workspaces",
-    "test": "npm run test --workspaces",
-    "test:coverage": "npm run test:coverage --workspaces",
-    "build": "npm run build --workspaces",
-    "dev:api": "npm run dev --workspace @platform/server",
-    "dev:web": "npm run dev --workspace @platform/web",
-    "loadtest": "npm exec --workspace @platform/server -- tsx src/bench/loadtest.ts",
+    "install:all": "cd server && npm ci && cd ../web && npm ci",
+    "typecheck": "cd server && npm run typecheck && cd ../web && npm run typecheck",
+    "test": "cd server && npm test && cd ../web && npm test",
+    "test:coverage": "cd server && npm run test:coverage && cd ../web && npm run test:coverage",
+    "build": "cd server && npm run build && cd ../web && npm run build",
+    "dev:api": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "loadtest": "cd server && npx tsx src/bench/loadtest.ts",
     "up": "docker compose up --build",
     "down": "docker compose down -v"
   }
