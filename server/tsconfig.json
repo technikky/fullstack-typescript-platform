@@ -1,6 +1,46 @@
 {
-  "extends": "../tsconfig.base.json",
+  "//": [
+    "Self-contained, with no `extends` reaching outside this directory.",
+    "",
+    "It extended ../tsconfig.base.json, and the Docker build proved that wrong. The image builds",
+    "with ./server as its context, so the root file is not present, and tsc answered",
+    "`TS5083: Cannot read file '/tsconfig.base.json'` and then silently fell back to its own",
+    "defaults -- target ES3. The build did not fail on the missing file; it failed on a hundred",
+    "cascading errors like `Private identifiers are only available when targeting ECMAScript 2015",
+    "and higher`, which points at node_modules and says nothing about the real cause.",
+    "",
+    "A package whose build depends on a file outside its own directory is not independently",
+    "buildable, and this repository already decided that server and web are independent (see the",
+    "note in the root package.json about npm workspaces). web/tsconfig.json was already",
+    "standalone; this one now matches. tsconfig.build.json extends *this* file, which is inside",
+    "the build context."
+  ],
   "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    "declaration": false,
+    "sourceMap": true,
+
     "noEmit": true,
     "types": ["node"]
   },

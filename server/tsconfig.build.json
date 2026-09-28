@@ -1,10 +1,17 @@
 {
-  "extends": "../tsconfig.base.json",
+  "//": [
+    "Extends ./tsconfig.json, which is inside the Docker build context. Reaching outside the",
+    "package meant the image built against tsc's defaults instead of these options -- see the note",
+    "in tsconfig.json.",
+    "",
+    "The only differences from the checking config: emit is on, output goes to dist/, and the",
+    "tests are excluded from the shipped build."
+  ],
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
     "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"]
+    "rootDir": "src"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
