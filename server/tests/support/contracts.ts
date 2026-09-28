@@ -30,6 +30,21 @@ export const TEST_DATABASE_URL = process.env["TEST_DATABASE_URL"];
 export const TEST_REDIS_URL = process.env["TEST_REDIS_URL"];
 
 /**
+ * A namespace unique to this process, prefixed onto every key and channel the key-value and
+ * broker contracts touch.
+ *
+ * Redis is shared and persistent, and these suites write keys with 30-60 second TTLs.
+ * Namespacing per *test* is not enough: two runs against the same instance inside that window
+ * reuse the same key names, so the second run finds the first run's values still live --
+ * `setIfAbsent` returns false where it expects true, and `incrementInWindow` continues someone
+ * else's count. CI hit exactly that when a second invocation of this file ran against the same
+ * service container, and the failure looked like a broken adapter rather than a colliding test.
+ *
+ * Flushing between runs would be worse: it would wipe whatever else is using that Redis.
+ */
+const RUN_NAMESPACE = `${process.pid.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/**
  * Assertions every `Database` implementation must satisfy.
  *
  * `open` returns a fresh database; the suite creates and drops its own table so it can run
@@ -208,9 +223,10 @@ export const describeKeyValueContract = (
   describe(`KeyValue contract: ${label}`, () => {
     let store: KeyValue;
     let clock: TestClock;
-    let prefix = 0;
+    let scope = 0;
 
-    const key = (name: string): string => `contract:${prefix}:${name}`;
+    const key = (name: string): string =>
+      `contract:${RUN_NAMESPACE}:${scope}:${name}`;
 
     beforeAll(async () => {
       clock = new TestClock(1_000_000);
@@ -222,9 +238,9 @@ export const describeKeyValueContract = (
     });
 
     beforeEach(() => {
-      // Redis has no per-test teardown here, so keys are namespaced instead of deleted: a flush
-      // would wipe whatever else is using that instance.
-      prefix += 1;
+      // Keys are namespaced rather than deleted -- a flush would wipe whatever else is using
+      // that instance. `scope` separates tests; RUN_NAMESPACE separates runs.
+      scope += 1;
     });
 
     it("returns null for a missing key", async () => {
@@ -345,8 +361,9 @@ export const describeKeyValueContract = (
 export const describeBrokerContract = (label: string, open: () => Promise<Broker>): void => {
   describe(`Broker contract: ${label}`, () => {
     let broker: Broker;
-    let prefix = 0;
-    const channel = (name: string): string => `contract:${prefix}:${name}`;
+    let scope = 0;
+    const channel = (name: string): string =>
+      `contract:${RUN_NAMESPACE}:${scope}:${name}`;
 
     /** Redis delivery is asynchronous, so every assertion waits for it rather than assuming. */
     const settle = async (): Promise<void> => {
@@ -362,7 +379,7 @@ export const describeBrokerContract = (label: string, open: () => Promise<Broker
     });
 
     beforeEach(() => {
-      prefix += 1;
+      scope += 1;
     });
 
     it("delivers to a subscriber", async () => {
