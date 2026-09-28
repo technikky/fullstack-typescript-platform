@@ -65,6 +65,12 @@ services:
       DATABASE_URL: "postgres://platform:${POSTGRES_PASSWORD:-platform-local-only}@postgres:5432/platform"
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:3000
+      # Required, because NODE_ENV is production above and the origin is localhost. That
+      # combination is exactly what the production check rejects by default -- and rightly, since
+      # shipping a localhost allow list is a real mistake. Here it is deliberate: this stack runs
+      # the production build for a browser on the developer's own machine. Opting in explicitly is
+      # the point; the check still catches a deployment that simply forgot to change the default.
+      ALLOW_LOCALHOST_CORS: "true"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "4000:4000"

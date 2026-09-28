@@ -69,6 +69,7 @@ with every problem listed, so an orchestrator can distinguish it from a crash.
 | `RATE_LIMIT_MAX_REQUESTS` | `300` | per IP and per user |
 | `AUTH_RATE_LIMIT_MAX_REQUESTS` | `10` | the credential-stuffing surface |
 | `CORS_ORIGINS` | `http://localhost:3000` | comma-separated; no wildcard default |
+| `ALLOW_LOCALHOST_CORS` | `false` | permits a localhost origin while `NODE_ENV=production` |
 | `BODY_LIMIT_BYTES` | `262144` | |
 | `LOG_LEVEL` | `info` | |
 
@@ -87,8 +88,11 @@ Each describes a combination that is individually valid and jointly wrong:
 - **`REDIS_URL` is required.** The in-memory store is per-process. With three replicas: rate limits
   become three times as permissive as configured, a logout revokes the access token on one replica and
   leaves it working on the other two, and WebSocket events do not cross pods.
-- **`CORS_ORIGINS` must not contain localhost.** A development allow list that reaches production is a
-  real hole.
+- **`CORS_ORIGINS` must not contain localhost**, unless `ALLOW_LOCALHOST_CORS=true`. A development
+  allow list that reaches production is a real hole -- but "production mode" and "reachable from the
+  internet" are not the same thing, and the process cannot tell them apart. The `docker compose`
+  stack runs the production build for a browser on the host and sets the flag for exactly that
+  reason. Setting it is a visible choice in a diff; forgetting to change a default is not.
 
 ## Health endpoints
 

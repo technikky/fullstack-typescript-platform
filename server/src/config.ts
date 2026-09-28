@@ -54,6 +54,24 @@ export const configSchema = z.object({
    */
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
 
+  /**
+   * Permit a localhost origin while `NODE_ENV=production`.
+   *
+   * The production rule below exists to catch a real mistake: deploying with the default
+   * `http://localhost:3000` allow list still in place. But "production mode" and "reachable from
+   * the internet" are not the same thing, and the process cannot tell them apart -- the
+   * `docker compose` stack in this repository runs the production build for a browser on the
+   * host, which is legitimate and which the blunt rule rejected outright.
+   *
+   * So the rule stays and gains an explicit, greppable opt-out. Setting this is a visible choice
+   * in a diff; forgetting to unset a default is not. A deployment that has not set it still
+   * cannot ship a localhost allow list.
+   */
+  ALLOW_LOCALHOST_CORS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   /** Requests larger than this are rejected before being buffered. */
   BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(256 * 1024),
@@ -80,6 +98,8 @@ export interface Config {
     readonly authMaxRequests: number;
   };
   readonly corsOrigins: readonly string[];
+  /** Whether a localhost origin was explicitly permitted in production. */
+  readonly allowLocalhostCors: boolean;
   readonly logLevel: RawConfig["LOG_LEVEL"];
   readonly bodyLimitBytes: number;
 }
@@ -116,8 +136,11 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
           "so rate limits and token revocation would not be shared between replicas",
       );
     }
-    if (raw.CORS_ORIGINS.includes("localhost")) {
-      problems.push("CORS_ORIGINS still contains localhost in production");
+    if (raw.CORS_ORIGINS.includes("localhost") && !raw.ALLOW_LOCALHOST_CORS) {
+      problems.push(
+        "CORS_ORIGINS still contains localhost in production; set ALLOW_LOCALHOST_CORS=true " +
+          "if this is a local stack running the production build on purpose",
+      );
     }
   }
   if (raw.ACCESS_TOKEN_TTL_SECONDS >= raw.REFRESH_TOKEN_TTL_SECONDS) {
@@ -148,6 +171,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
       authMaxRequests: raw.AUTH_RATE_LIMIT_MAX_REQUESTS,
     },
     corsOrigins: origins,
+    allowLocalhostCors: raw.ALLOW_LOCALHOST_CORS,
     logLevel: raw.LOG_LEVEL,
     bodyLimitBytes: raw.BODY_LIMIT_BYTES,
   };

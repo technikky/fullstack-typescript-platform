@@ -169,9 +169,44 @@ describe("production requires real infrastructure", () => {
   });
 
   it("refuses a production CORS list that still trusts localhost", () => {
-    expect(production({ CORS_ORIGINS: "https://app.example.com,http://localhost:3000" })).toEqual([
-      expect.stringContaining("localhost"),
-    ]);
+    const reported = production({ CORS_ORIGINS: "https://app.example.com,http://localhost:3000" });
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toContain("localhost");
+    // The message names the opt-out, so the fix is discoverable from the failure alone.
+    expect(reported[0]).toContain("ALLOW_LOCALHOST_CORS");
+  });
+
+  it("permits localhost in production when it is opted into explicitly", () => {
+    // The `docker compose` stack runs the production build for a browser on the host, which is
+    // legitimate. "Production mode" and "reachable from the internet" are not the same thing, and
+    // the process cannot tell them apart -- so the distinction is made by an explicit flag rather
+    // than by weakening the rule.
+    expect(
+      production({
+        CORS_ORIGINS: "http://localhost:3000",
+        ALLOW_LOCALHOST_CORS: "true",
+      }),
+    ).toEqual([]);
+  });
+
+  it("treats any value other than true as not opted in", () => {
+    // A typo must fail closed. Only the literal "true" opts in; "1", "yes" and "TRUE" do not,
+    // and an unrecognised value is a configuration error rather than a silent false.
+    for (const value of ["1", "yes", "TRUE", "on"]) {
+      expect(
+        production({ CORS_ORIGINS: "http://localhost:3000", ALLOW_LOCALHOST_CORS: value }),
+        value,
+      ).not.toEqual([]);
+    }
+  });
+
+  it("does not require the opt-out outside production", () => {
+    expect(problems({ CORS_ORIGINS: "http://localhost:3000" })).toEqual([]);
+  });
+
+  it("exposes the flag on the parsed config", () => {
+    expect(loadConfig(env()).allowLocalhostCors).toBe(false);
+    expect(loadConfig(env({ ALLOW_LOCALHOST_CORS: "true" })).allowLocalhostCors).toBe(true);
   });
 
   it("reports every production problem together", () => {

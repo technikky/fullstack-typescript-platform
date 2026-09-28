@@ -49,6 +49,7 @@ export const testConfig = (overrides: Partial<Config> = {}): Config => ({
   redisUrl: null,
   rateLimit: { windowSeconds: 60, maxRequests: 10_000, authMaxRequests: 10_000 },
   corsOrigins: ["http://localhost:3000"],
+  allowLocalhostCors: false,
   logLevel: "silent",
   bodyLimitBytes: 256 * 1024,
   ...overrides,
